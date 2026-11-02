@@ -7,16 +7,20 @@ Initial Node.js/PostgreSQL backend scaffold for centralized Google/Apple OAuth, 
 ## Current scope
 
 - Better Auth configuration with PostgreSQL, email OTP through SMTP and phone OTP through Twilio Programmable Messaging (not Twilio Verify).
-- Immediate profile activation after a successful login; per-user asset queries.
+- Administrator approval after identity verification; per-user asset queries.
 - Point/polygon geometry validation, administrator dataset assignment and authenticated Zarr file access.
 - Persistent enquiry records with retried email notifications.
 - Report request records only; generation and delivery are not implemented.
 
+## Deployment guide
+
+See [MAC_MINI_RULEBOOK.md](MAC_MINI_RULEBOOK.md) for the Docker Compose setup and [REQUIREMENTS.md](REQUIREMENTS.md) for verified coverage and remaining gaps. The account UI, map selection, administrator approval and platform entry integration are now included.
+
 ## Still required
 
-- Account UI, map drawing, dashboard and administrator UI.
-- Integration of Web, Agri, Dams and Building with selected assets and shared authentication.
-- Production deployment manifests, complete Mac Mini/Antigravity rulebook, backups and recovery procedures.
+- Live provider and Mac runtime acceptance tests.
+- Real agricultural KPI processing and building analysis; validate Dams against the actual store schema.
+- Execute the provided deployment and restore procedures on the actual Mac Mini.
 - Verified-contact enforcement review, abuse controls, account linking, report generation/notification worker and data pipeline integration.
 - Database migrations and authentication/security tests against a running PostgreSQL instance.
 
@@ -30,4 +34,4 @@ OAuth: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APPLE_CLIENT_ID`, `APPLE_CLI
 SMS: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`.
 Operations: `ADMIN_EMAILS` (comma separated), `ZARR_ROOT`, `PORT` (default 8080).
 
-Secrets belong in the Mac's protected runtime environment, never in Git. The current server expects platform mounts under `/platforms/` and a future account UI in `public/`; these are not included yet. Do not expose this scaffold publicly until the remaining work and security checks are complete.
+Secrets belong in the Mac's protected runtime environment, never in Git. Compose provides platform mounts under `/platforms/`; the account UI is included in `public/`. Do not expose this scaffold publicly until the remaining work and security checks are complete.

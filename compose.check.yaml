@@ -1,0 +1,5 @@
+# Used with --env-file .env.example for configuration validation without secrets.
+services:
+  app:
+    env_file: !override
+      - .env.example

@@ -6,17 +6,19 @@ import path from 'node:path';
 import {realpath} from 'node:fs/promises';
 import {auth,db,origin,mail} from './auth.js';
 import {assetInput,enquiryInput} from './validation.js';
+import {canUsePlatforms,isAdministrator} from './access.js';
 const app=express();app.disable('x-powered-by');
 app.all('/api/auth/*splat',toNodeHandler(auth));app.use(express.json({limit:'200kb'}));
 app.use((req,res,next)=>{res.set('X-Content-Type-Options','nosniff');if(req.path.startsWith('/api/'))res.set('Cache-Control','no-store');if(!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==origin)return res.status(403).json({error:'Invalid request origin'});next();});
 app.get('/health',async(req,res)=>{await db.query('SELECT 1');res.json({ok:true});});
 app.get('/api/config',(req,res)=>res.json({google:!!process.env.GOOGLE_CLIENT_ID,apple:!!process.env.APPLE_CLIENT_ID,email:!!process.env.SMTP_HOST,phone:!!process.env.TWILIO_ACCOUNT_SID}));
 app.post('/api/enquiries',rateLimit({windowMs:3600000,limit:10}),async(req,res)=>{const details=enquiryInput.parse(req.body);const id=randomUUID();await db.query('INSERT INTO enquiries(id,details) VALUES($1,$2)',[id,details]);res.status(201).json({id,message:'Your enquiry has been received.'});});
-async function session(req,res,next){const s=await auth.api.getSession({headers:fromNodeHeaders(req.headers)});if(!s)return res.status(401).json({error:'Please sign in'});req.user=s.user;await db.query("INSERT INTO profiles(user_id,status) VALUES($1,'active') ON CONFLICT DO NOTHING",[s.user.id]);const {rows}=await db.query('SELECT * FROM profiles WHERE user_id=$1',[s.user.id]);req.profile=rows[0];if(req.profile.status!=='active')return res.status(403).json({error:'Account suspended'});next();}
+async function session(req,res,next){const s=await auth.api.getSession({headers:fromNodeHeaders(req.headers)});if(!s)return res.status(401).json({error:'Please sign in'});req.user=s.user;await db.query("INSERT INTO profiles(user_id,status) VALUES($1,'pending') ON CONFLICT DO NOTHING",[s.user.id]);const {rows}=await db.query('SELECT * FROM profiles WHERE user_id=$1',[s.user.id]);req.profile=rows[0];if(req.profile.status==='suspended')return res.status(403).json({error:'Account suspended'});if(!req.user.emailVerified&&!req.user.phoneNumberVerified)return res.status(403).json({error:'Verify your email or phone first'});next();}
 app.use('/api/me',session);app.use('/api/assets',session);app.use('/api/reports',session);app.use('/api/admin',session);
-const admin=req=>(process.env.ADMIN_EMAILS||'').split(',').includes(req.user.email)&&req.user.emailVerified;
+const admin=req=>isAdministrator(req.user,process.env.ADMIN_EMAILS||'');
 app.get('/api/me',(req,res)=>res.json({user:req.user,profile:req.profile,admin:admin(req)}));
 app.patch('/api/me',async(req,res)=>{const organization=String(req.body.organization||'').trim();if(organization.length>200)return res.status(400).json({error:'Organization is too long'});await db.query('UPDATE profiles SET organization=$1 WHERE user_id=$2',[organization,req.user.id]);res.json({ok:true});});
+app.use(['/api/assets','/api/reports'],(req,res,next)=>canUsePlatforms(req.user,req.profile)?next():res.status(403).json({error:'Your profile is awaiting administrator approval'}));
 app.get('/api/assets',async(req,res)=>res.json((await db.query('SELECT * FROM assets WHERE user_id=$1 ORDER BY created_at DESC',[req.user.id])).rows));
 app.post('/api/assets',async(req,res)=>{const a=assetInput.parse(req.body);const id=randomUUID();await db.query('INSERT INTO assets(id,user_id,service,name,geometry) VALUES($1,$2,$3,$4,$5)',[id,req.user.id,a.service,a.name,a.geometry]);res.status(201).json({id});});
 async function owned(req,res,next){if(!/^[\da-f-]{36}$/i.test(req.params.id))return res.status(404).json({error:'Asset not found'});const {rows}=await db.query('SELECT * FROM assets WHERE id=$1 AND user_id=$2',[req.params.id,req.user.id]);if(!rows[0])return res.status(404).json({error:'Asset not found'});req.asset=rows[0];next();}
@@ -25,12 +27,14 @@ app.get('/api/assets/:id/zarr/*key',owned,async(req,res)=>{if(!req.asset.dataset
 app.post('/api/assets/:id/reports',owned,async(req,res)=>{if(!['email','sms','whatsapp'].includes(req.body.channel))return res.status(400).json({error:'Choose a delivery channel'});if(req.body.channel==='email'&&!req.user.emailVerified)return res.status(400).json({error:'Verify an email address before requesting email delivery'});if(req.body.channel!=='email'&&!req.user.phoneNumberVerified)return res.status(400).json({error:'Verify your phone number first'});const id=randomUUID();await db.query('INSERT INTO reports(id,asset_id,user_id,channel) VALUES($1,$2,$3,$4)',[id,req.asset.id,req.user.id,req.body.channel]);res.status(201).json({id,status:'requested'});});
 app.get('/api/reports',async(req,res)=>res.json((await db.query('SELECT * FROM reports WHERE user_id=$1 ORDER BY created_at DESC',[req.user.id])).rows));
 app.use('/api/admin',(req,res,next)=>admin(req)?next():res.sendStatus(403));
+app.get('/api/admin/users',async(req,res)=>res.json((await db.query('SELECT p.*,u.email,u.name FROM profiles p JOIN "user" u ON u.id=p.user_id ORDER BY p.status')).rows));
+app.patch('/api/admin/users/:id',async(req,res)=>{if(!['active','pending','suspended'].includes(req.body.status))return res.sendStatus(400);await db.query('UPDATE profiles SET status=$1 WHERE user_id=$2',[req.body.status,req.params.id]);res.json({ok:true});});
 app.get('/api/admin/assets',async(req,res)=>res.json((await db.query('SELECT * FROM assets ORDER BY created_at DESC')).rows));
 app.patch('/api/admin/assets/:id/dataset',async(req,res)=>{const key=String(req.body.dataset_key||'');if(!/^[a-zA-Z0-9_/-]+\.zarr$/.test(key)||key.includes('..')||key.startsWith('/'))return res.status(400).json({error:'Use a relative .zarr directory'});await db.query('UPDATE assets SET dataset_key=$1 WHERE id=$2',[key,req.params.id]);res.json({ok:true});});
 app.get('/api/admin/reports',async(req,res)=>res.json((await db.query('SELECT * FROM reports ORDER BY created_at')).rows));
 app.get('/api/admin/enquiries',async(req,res)=>res.json((await db.query('SELECT * FROM enquiries ORDER BY created_at DESC')).rows));
 app.use('/account',express.static('public'));
-for(const service of ['agri','dams','building'])app.use('/'+service,session,express.static('/platforms/'+service));
+for(const service of ['agri','dams','building'])app.use('/'+service,session,(req,res,next)=>canUsePlatforms(req.user,req.profile)?next():res.status(403).send('Your profile is awaiting administrator approval. Return to /account/.'),express.static('/platforms/'+service));
 app.use(express.static('/platforms/web'));
 app.use((err,req,res,next)=>{if(err.name==='ZodError')return res.status(400).json({error:'Check the supplied fields',issues:err.issues});if(err.code==='ENOENT')return res.status(404).json({error:'Dataset file not available'});console.error(err.message);res.status(500).json({error:'Request could not be completed'});});
 // Retry stored enquiries; records remain available if notification delivery fails.

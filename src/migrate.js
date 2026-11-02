@@ -1,4 +1,4 @@
-import { getMigrations } from 'better-auth/db';
+import { getMigrations } from 'better-auth/db/migration';
 import { auth,db } from './auth.js';
 const {runMigrations}=await getMigrations(auth.options);await runMigrations();
 await db.query(`CREATE TABLE IF NOT EXISTS profiles(user_id text PRIMARY KEY REFERENCES "user"(id) ON DELETE CASCADE, organization text NOT NULL DEFAULT '', status text NOT NULL DEFAULT 'pending', preferences jsonb NOT NULL DEFAULT '{}');

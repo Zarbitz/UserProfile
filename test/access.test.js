@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {canUsePlatforms,isAdministrator} from '../src/access.js';
+test('approval and identity verification are both required',()=>{for(const state of ['pending','suspended',undefined])assert.equal(canUsePlatforms({emailVerified:true},{status:state}),false);assert.equal(canUsePlatforms({emailVerified:false},{status:'active'}),false);assert.equal(canUsePlatforms({phoneNumberVerified:true},{status:'active'}),true);});
+test('admin allowlist cannot bypass verified email',()=>{assert.equal(isAdministrator({email:'owner@example.com',emailVerified:false},'owner@example.com'),false);assert.equal(isAdministrator({email:'attacker@example.com',emailVerified:true},'owner@example.com'),false);assert.equal(isAdministrator({email:'Owner@example.com',emailVerified:true},' owner@example.com '),true);});
