@@ -1,0 +1,11 @@
+import { betterAuth } from 'better-auth';
+import { emailOTP, phoneNumber } from 'better-auth/plugins';
+import pg from 'pg';
+import nodemailer from 'nodemailer';
+export const db = new pg.Pool({connectionString:process.env.DATABASE_URL});
+export const origin = process.env.PUBLIC_URL || 'http://localhost:8080';
+export const mailer = nodemailer.createTransport({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),secure:process.env.SMTP_PORT==='465',auth:process.env.SMTP_USER?{user:process.env.SMTP_USER,pass:process.env.SMTP_PASSWORD}:undefined});
+export async function mail(to,subject,text){if(!process.env.SMTP_HOST)throw Error('Email delivery is not configured');await mailer.sendMail({from:process.env.MAIL_FROM,to,subject,text});}
+const socialProviders={};
+for(const provider of ['google','apple']){const key=provider.toUpperCase();if(process.env[key+'_CLIENT_ID']&&process.env[key+'_CLIENT_SECRET'])socialProviders[provider]={clientId:process.env[key+'_CLIENT_ID'],clientSecret:process.env[key+'_CLIENT_SECRET']};}
+export const auth=betterAuth({database:db,baseURL:origin,secret:process.env.BETTER_AUTH_SECRET,trustedOrigins:[origin,...(socialProviders.apple?['https://appleid.apple.com']:[])],socialProviders,rateLimit:{enabled:true,storage:'database'},plugins:[emailOTP({expiresIn:300,allowedAttempts:3,storeOTP:'hashed',async sendVerificationOTP({email,otp}){await mail(email,'Your ZARBITZ verification code',`Your code is ${otp}. It expires in five minutes.`);}}),phoneNumber({expiresIn:300,allowedAttempts:3,phoneNumberValidator:n=>/^\+[1-9]\d{7,14}$/.test(n),signUpOnVerification:{getTempEmail:n=>n.slice(1)+'@phone.invalid',getTempName:()=> 'New customer'},async sendOTP({phoneNumber,code}){if(!process.env.TWILIO_ACCOUNT_SID)throw Error('SMS delivery is not configured');const r=await fetch(`https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`,{method:'POST',headers:{Authorization:'Basic '+Buffer.from(process.env.TWILIO_ACCOUNT_SID+':'+process.env.TWILIO_AUTH_TOKEN).toString('base64'),'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({To:phoneNumber,From:process.env.TWILIO_FROM,Body:`Your ZARBITZ code is ${code}. Expires in five minutes.`})});if(!r.ok)throw Error('SMS delivery failed');}})]});
